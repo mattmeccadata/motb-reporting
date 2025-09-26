@@ -130,7 +130,7 @@ def diagnostics():
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
-    st.caption("Click on the tabs below to navigate between reports. Download to Excel using the button.")
+    st.caption("First, click the run/refresh button on the left. The report will take a few seconds to run. Then, click on the tabs below to navigate between reports. Download to Excel using the button.")
 
     _env_secrets_to_env()
 
