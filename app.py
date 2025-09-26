@@ -151,13 +151,10 @@ def main():
 
     try:
         with st.status("Executing notebook…", expanded=False) as status:
-            if uploaded is not None:
-                ns = execute_notebook_from_bytes(uploaded.read())
-            else:
-                if not Path(nb_path).exists():
-                    raise FileNotFoundError(f"Notebook not found at: {nb_path}")
-                ns = execute_notebook_from_file(nb_path)
-            status.update(state="complete", label="Notebook executed")
+            if not Path(nb_path).exists():
+                raise FileNotFoundError(f"Notebook not found at: {nb_path}")
+            ns = execute_notebook_from_file(nb_path)
+        status.update(state="complete", label="Notebook executed")
 
         frames = collect_output_frames(ns)
 
