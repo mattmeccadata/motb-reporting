@@ -177,7 +177,7 @@ def main():
         st.download_button(
             "Download all tables (Excel)",
             data=excel_bytes,
-            ile_name=f"regional_report_download_{pd.Timestamp.today().strftime('%m%d%Y')}.xlsx",
+            file_name=f"regional_report_download_{pd.Timestamp.today().strftime('%m%d%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
