@@ -130,14 +130,12 @@ def diagnostics():
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
-    st.caption("First, click the run/refresh button on the left. The report will take a few seconds to run. \n Then, click on the tabs below to navigate between reports. Download to Excel using the button.")
+    st.caption("First, click the run/refresh button on the left. The report will take a few seconds to run. Then, click on the tabs below to navigate between reports. Download to Excel using the button.")
 
     _env_secrets_to_env()
 
     st.sidebar.header("Run")
     default_path = _find_default_path()
-    nb_path = st.sidebar.text_input("Notebook file path", default_path)
-    uploaded = st.sidebar.file_uploader("…or upload a .ipynb", type=["ipynb"])
     run = st.sidebar.button("Run / Refresh", type="primary")
 
     if "MONDAY_API_TOKEN" not in os.environ and "MONDAY_API_TOKEN" not in st.secrets:
