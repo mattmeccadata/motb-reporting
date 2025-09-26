@@ -10,7 +10,7 @@ import pandas as pd
 from nbconvert import PythonExporter
 import nbformat
 
-APP_TITLE = "DataFrame Viewer (Notebook-powered)"
+APP_TITLE = "Regional Funding Report"
 DEFAULT_NOTEBOOK_NAME = "motb-reporting.ipynb"
 APP_DIR = Path(__file__).resolve().parent
 
@@ -130,7 +130,7 @@ def diagnostics():
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
-    st.caption("Runs the bundled Jupyter Notebook and displays its resulting tables.")
+    st.caption("Click on the tabs below to navigate between reports. Download to Excel using the button.")
 
     _env_secrets_to_env()
 
