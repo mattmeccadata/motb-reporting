@@ -1,44 +1,74 @@
 
 import os
 import io
-import json
 import traceback
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List
+from pathlib import Path
 
 import streamlit as st
 import pandas as pd
-
-# Optional: used to turn the notebook into executable Python code
 from nbconvert import PythonExporter
-
+import nbformat
 
 APP_TITLE = "DataFrame Viewer (Notebook-powered)"
-NOTEBOOK_PATH = "motb-reporting.ipynb"  # keep this file in the same repo directory
+DEFAULT_NOTEBOOK_NAME = "motb-reporting.ipynb"
+APP_DIR = Path(__file__).resolve().parent
 
+# ---- display/HTML shims so notebook code using IPython.display won't crash ----
+def _display_shim(obj=None, *args, **kwargs):
+    """Best-effort renderer for common notebook display() usage inside Streamlit."""
+    try:
+        # Avoid duplicating rendering; this is only for misc HTML or prints
+        if obj is None:
+            return
+        if isinstance(obj, pd.DataFrame):
+            # Let the main app render the canonical DataFrames; still show if called
+            st.dataframe(obj, use_container_width=True)
+        elif hasattr(obj, "_repr_html_"):
+            st.markdown(obj._repr_html_(), unsafe_allow_html=True)
+        elif isinstance(obj, str) and obj.strip().startswith("<"):
+            st.markdown(obj, unsafe_allow_html=True)
+        else:
+            st.write(obj)
+    except Exception:
+        # Never let display issues crash the run
+        pass
 
-def execute_notebook_to_namespace(nb_path: str) -> Dict[str, Any]:
-    """
-    Convert a .ipynb notebook to plain Python code with nbconvert, then exec() it.
-    Returns the globals namespace so we can pull variables defined by the notebook.
-    """
+class HTML(str):
+    """Lightweight stand-in for IPython.display.HTML"""
+    def _repr_html_(self):
+        return str(self)
+
+def _default_candidates() -> List[Path]:
+    return [
+        APP_DIR / DEFAULT_NOTEBOOK_NAME,
+        Path.cwd() / DEFAULT_NOTEBOOK_NAME,
+        APP_DIR / "notebooks" / DEFAULT_NOTEBOOK_NAME,
+        APP_DIR.parent / DEFAULT_NOTEBOOK_NAME,
+    ]
+
+def _find_default_path() -> str:
+    for p in _default_candidates():
+        if p.exists():
+            return str(p)
+    return str(APP_DIR / DEFAULT_NOTEBOOK_NAME)
+
+def execute_notebook_from_file(nb_path: str) -> Dict[str, Any]:
     exporter = PythonExporter()
     code, _ = exporter.from_filename(nb_path)
-
-    # Streamlit Secrets -> ENV (for notebooks that read tokens with os.getenv)
-    # e.g., set st.secrets["MONDAY_API_TOKEN"] in Streamlit Cloud
-    if "MONDAY_API_TOKEN" in st.secrets:
-        os.environ["MONDAY_API_TOKEN"] = st.secrets["MONDAY_API_TOKEN"]
-
-    ns: Dict[str, Any] = {}
-    exec(compile(code, nb_path, "exec"), ns)  # execute notebook-derived code
+    ns: Dict[str, Any] = {"display": _display_shim, "HTML": HTML}
+    exec(compile(code, nb_path, "exec"), ns)
     return ns
 
+def execute_notebook_from_bytes(nb_bytes: bytes) -> Dict[str, Any]:
+    exporter = PythonExporter()
+    nb = nbformat.read(io.BytesIO(nb_bytes), as_version=4)
+    code, _ = exporter.from_notebook_node(nb)
+    ns: Dict[str, Any] = {"display": _display_shim, "HTML": HTML}
+    exec(compile(code, "<uploaded-notebook>", "exec"), ns)
+    return ns
 
 def collect_output_frames(ns: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-    """
-    Pull the six target DataFrames from the executed notebook namespace.
-    Falls back to deriving the D-frames if only base frames exist.
-    """
     frames: Dict[str, pd.DataFrame] = {}
 
     def get_df(name: str) -> pd.DataFrame:
@@ -47,32 +77,27 @@ def collect_output_frames(ns: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
             return df
         return pd.DataFrame()
 
-    # A, B, C
     frames["A) Region revenue breakdown"] = get_df("region_rev_breakdown")
     frames["B) Region commitments"] = get_df("region_commitments")
     frames["C) Region balances"] = get_df("region_balances")
 
-    # D1, D2 (if notebook didn't create the *_display, derive from bases)
     d1 = ns.get("unfulfilled_2024_display")
     d2 = ns.get("unfulfilled_2025_display")
 
     if not isinstance(d1, pd.DataFrame) or not isinstance(d2, pd.DataFrame):
         pledge_detail_bal = get_df("pledge_detail_bal")
         if not pledge_detail_bal.empty:
-            cols_common = ["pledge_group","name","region","email","phone","address"]
-            if "balance_2024" in pledge_detail_bal.columns:
+            cols_common = [c for c in ["pledge_group","name","region","email","phone","address"] if c in pledge_detail_bal.columns]
+            if "balance_2024" in pledge_detail_bal.columns and cols_common:
                 d1 = pledge_detail_bal[cols_common + ["balance_2024"]].copy()
-            if "balance_2025" in pledge_detail_bal.columns:
+            if "balance_2025" in pledge_detail_bal.columns and cols_common:
                 d2 = pledge_detail_bal[cols_common + ["balance_2025"]].copy()
 
     frames["D1) Unfulfilled 2024"] = d1 if isinstance(d1, pd.DataFrame) else pd.DataFrame()
     frames["D2) Unfulfilled 2025"] = d2 if isinstance(d2, pd.DataFrame) else pd.DataFrame()
-
-    # E
     frames["E) Potential misidentified gifts"] = get_df("potential_matches_df")
 
     return frames
-
 
 def to_excel_bytes(frames: Dict[str, pd.DataFrame]) -> bytes:
     buffer = io.BytesIO()
@@ -80,19 +105,39 @@ def to_excel_bytes(frames: Dict[str, pd.DataFrame]) -> bytes:
         for name, df in frames.items():
             if df is None or df.empty:
                 continue
-            # Sheet names limited to 31 chars
             sheet = name.replace("/", "-")[:31]
             df.to_excel(writer, index=False, sheet_name=sheet)
     return buffer.getvalue()
 
+def _env_secrets_to_env():
+    if "MONDAY_API_TOKEN" in st.secrets:
+        os.environ["MONDAY_API_TOKEN"] = st.secrets["MONDAY_API_TOKEN"]
+
+def diagnostics():
+    with st.expander("Diagnostics", expanded=False):
+        st.write("**Working directory**:", os.getcwd())
+        try:
+            st.write("**Files in working dir**:", os.listdir("."))
+        except Exception as e:
+            st.write("Could not list working dir:", e)
+        st.write("**App directory**:", str(APP_DIR))
+        try:
+            st.write("**Files in app dir**:", os.listdir(str(APP_DIR)))
+        except Exception as e:
+            st.write("Could not list app dir:", e)
+        st.write("**Notebook search candidates**:", [str(p) for p in _default_candidates()])
 
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
     st.caption("Runs the bundled Jupyter Notebook and displays its resulting tables.")
 
+    _env_secrets_to_env()
+
     st.sidebar.header("Run")
-    nb_file = st.sidebar.text_input("Notebook file path", NOTEBOOK_PATH)
+    default_path = _find_default_path()
+    nb_path = st.sidebar.text_input("Notebook file path", default_path)
+    uploaded = st.sidebar.file_uploader("…or upload a .ipynb", type=["ipynb"])
     run = st.sidebar.button("Run / Refresh", type="primary")
 
     if "MONDAY_API_TOKEN" not in os.environ and "MONDAY_API_TOKEN" not in st.secrets:
@@ -100,13 +145,20 @@ def main():
             st.info("Set **MONDAY_API_TOKEN** in Streamlit secrets for the notebook's API calls.")
         st.warning("No MONDAY_API_TOKEN found. The notebook may fail if it requires API access.")
 
+    diagnostics()
+
     if not run:
         st.info("Click **Run / Refresh** to execute the notebook and render the DataFrames.")
         return
 
     try:
         with st.status("Executing notebook…", expanded=False) as status:
-            ns = execute_notebook_to_namespace(nb_file)
+            if uploaded is not None:
+                ns = execute_notebook_from_bytes(uploaded.read())
+            else:
+                if not Path(nb_path).exists():
+                    raise FileNotFoundError(f"Notebook not found at: {nb_path}")
+                ns = execute_notebook_from_file(nb_path)
             status.update(state="complete", label="Notebook executed")
 
         frames = collect_output_frames(ns)
@@ -135,7 +187,6 @@ def main():
         st.exception(e)
         with st.expander("Full traceback"):
             st.code(traceback.format_exc())
-
 
 if __name__ == "__main__":
     main()
