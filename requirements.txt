@@ -3,3 +3,6 @@ pandas
 xlsxwriter
 nbconvert
 nbformat
+rapidfuzz
+python-dateutil
+requests
