@@ -129,13 +129,15 @@ def diagnostics():
 # ---------- NEW: region drill-down using expanders ----------
 def render_region_breakdown_expanders(df: pd.DataFrame):
     """
-    Expects columns: region, mapped_class, bucket, amount, additions_2024, additions_2025
-    Shows an expander per region. Header = Total row + class subtotals.
+    Expects columns: region, bucket, amount, additions_2024, additions_2025
+    Shows an expander per region. The expander header is the 'Total' row,
+    and inside you see the Restricted/Unrestricted drill-down.
     """
     if df is None or df.empty:
         st.info("No data to display.")
         return
 
+    # Ensure nice order within each region
     if "bucket" in df.columns:
         bucket_order = pd.api.types.CategoricalDtype(["Total", "Unrestricted", "Restricted"], ordered=True)
         try:
@@ -144,12 +146,14 @@ def render_region_breakdown_expanders(df: pd.DataFrame):
         except Exception:
             pass
 
+    # Regions in order, with "Total" region at the end if present
     regions = list(df["region"].dropna().unique())
     if "Total" in regions:
         regions = [r for r in regions if r != "Total"] + ["Total"]
 
-    cols_show = [c for c in ["mapped_class","bucket","amount","additions_2024","additions_2025"] if c in df.columns]
+    cols_show = [c for c in ["bucket", "amount", "additions_2024", "additions_2025"] if c in df.columns]
 
+    # Optional global expand/collapse controls
     c1, c2 = st.columns([1,1])
     with c1:
         expand_all = st.button("Expand all")
@@ -161,20 +165,23 @@ def render_region_breakdown_expanders(df: pd.DataFrame):
 
     for region in regions:
         g = df[df["region"] == region]
-
-        # total row (bucket == 'Total', mapped_class == 'Total')
-        total_row = g[(g["bucket"] == "Total") & (g["mapped_class"] == "Total")]
-        header_parts = []
+        total_row = g[g["bucket"] == "Total"][cols_show]
+        # Build a compact summary for the header
         if not total_row.empty:
-            amt = float(total_row.iloc[0]["amount"])
-            header_parts.append(f"{region} — Total: {amt:,.2f}")
-
-        # per mapped_class totals (bucket == 'Total' but not mapped_class 'Total')
-        class_totals = g[(g["bucket"] == "Total") & (g["mapped_class"] != "Total")]
-        for _, row in class_totals.iterrows():
-            header_parts.append(f"{row['mapped_class']}: {row['amount']:,.2f}")
-
-        header = " | ".join(header_parts) if header_parts else f"{region}"
+            tr = total_row.iloc[0]
+            def _fmt(x): 
+                try:
+                    return f"{float(x):,.2f}"
+                except Exception:
+                    return "0.00"
+            parts = [f"{region} — Total: {_fmt(tr.get('amount', 0))}"]
+            if "additions_2024" in tr.index:
+                parts.append(f"2024: {_fmt(tr.get('additions_2024', 0))}")
+            if "additions_2025" in tr.index:
+                parts.append(f"2025: {_fmt(tr.get('additions_2025', 0))}")
+            header = " | ".join(parts)
+        else:
+            header = f"{region}"
 
         with st.expander(header, expanded=default_expanded):
             detail = g[g["bucket"].isin(["Unrestricted", "Restricted"])]
