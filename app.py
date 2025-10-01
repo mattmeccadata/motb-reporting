@@ -15,10 +15,13 @@ APP_DIR = Path(__file__).resolve().parent
 
 # ---- display/HTML shims so notebook code using IPython.display won't crash ----
 def _display_shim(obj=None, *args, **kwargs):
+    """Best-effort renderer for common notebook display() usage inside Streamlit."""
     try:
+        # Avoid duplicating rendering; this is only for misc HTML or prints
         if obj is None:
             return
         if isinstance(obj, pd.DataFrame):
+            # Let the main app render the canonical DataFrames; still show if called
             st.dataframe(obj, use_container_width=True)
         elif hasattr(obj, "_repr_html_"):
             st.markdown(obj._repr_html_(), unsafe_allow_html=True)
@@ -27,9 +30,11 @@ def _display_shim(obj=None, *args, **kwargs):
         else:
             st.write(obj)
     except Exception:
+        # Never let display issues crash the run
         pass
 
 class HTML(str):
+    """Lightweight stand-in for IPython.display.HTML"""
     def _repr_html_(self):
         return str(self)
 
@@ -47,25 +52,10 @@ def _find_default_path() -> str:
             return str(p)
     return str(APP_DIR / DEFAULT_NOTEBOOK_NAME)
 
-# ---------- helper: seed a namespace with safe defaults ----------
-def _seed_ns() -> Dict[str, Any]:
-    # Anything your app (or notebook) might reference before assignment
-    return {
-        "display": _display_shim,
-        "HTML": HTML,
-        "region_rev_breakdown": pd.DataFrame(),
-        "region_commitments": pd.DataFrame(),
-        "region_balances": pd.DataFrame(),
-        "unfulfilled_2024_display": pd.DataFrame(),
-        "unfulfilled_2025_display": pd.DataFrame(),
-        "pledge_detail_bal": pd.DataFrame(),
-        "potential_matches_df": pd.DataFrame(),
-    }
-
 def execute_notebook_from_file(nb_path: str) -> Dict[str, Any]:
     exporter = PythonExporter()
     code, _ = exporter.from_filename(nb_path)
-    ns: Dict[str, Any] = _seed_ns()
+    ns: Dict[str, Any] = {"display": _display_shim, "HTML": HTML}
     exec(compile(code, nb_path, "exec"), ns)
     return ns
 
@@ -73,7 +63,7 @@ def execute_notebook_from_bytes(nb_bytes: bytes) -> Dict[str, Any]:
     exporter = PythonExporter()
     nb = nbformat.read(io.BytesIO(nb_bytes), as_version=4)
     code, _ = exporter.from_notebook_node(nb)
-    ns: Dict[str, Any] = _seed_ns()
+    ns: Dict[str, Any] = {"display": _display_shim, "HTML": HTML}
     exec(compile(code, "<uploaded-notebook>", "exec"), ns)
     return ns
 
@@ -136,8 +126,12 @@ def diagnostics():
             st.write("Could not list app dir:", e)
         st.write("**Notebook search candidates**:", [str(p) for p in _default_candidates()])
 
-# ---------- expanders UI (mapped_class summary in header) ----------
+# ---------- NEW: region drill-down using expanders ----------
 def render_region_breakdown_expanders(df: pd.DataFrame):
+    """
+    Expects columns: region, mapped_class, bucket, amount, additions_2024, additions_2025
+    Shows an expander per region. Header = Total row + class subtotals.
+    """
     if df is None or df.empty:
         st.info("No data to display.")
         return
@@ -188,6 +182,8 @@ def render_region_breakdown_expanders(df: pd.DataFrame):
                 st.dataframe(detail[cols_show], use_container_width=True)
             else:
                 st.caption("No Restricted/Unrestricted detail for this region.")
+
+# ------------------------------------------------------------
 
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
