@@ -1,4 +1,3 @@
-
 import os
 import io
 import traceback
@@ -127,6 +126,72 @@ def diagnostics():
             st.write("Could not list app dir:", e)
         st.write("**Notebook search candidates**:", [str(p) for p in _default_candidates()])
 
+# ---------- NEW: region drill-down using expanders ----------
+def render_region_breakdown_expanders(df: pd.DataFrame):
+    """
+    Expects columns: region, bucket, amount, additions_2024, additions_2025
+    Shows an expander per region. The expander header is the 'Total' row,
+    and inside you see the Restricted/Unrestricted drill-down.
+    """
+    if df is None or df.empty:
+        st.info("No data to display.")
+        return
+
+    # Ensure nice order within each region
+    if "bucket" in df.columns:
+        bucket_order = pd.api.types.CategoricalDtype(["Total", "Unrestricted", "Restricted"], ordered=True)
+        try:
+            df = df.copy()
+            df["bucket"] = df["bucket"].astype(bucket_order)
+        except Exception:
+            pass
+
+    # Regions in order, with "Total" region at the end if present
+    regions = list(df["region"].dropna().unique())
+    if "Total" in regions:
+        regions = [r for r in regions if r != "Total"] + ["Total"]
+
+    cols_show = [c for c in ["bucket", "amount", "additions_2024", "additions_2025"] if c in df.columns]
+
+    # Optional global expand/collapse controls
+    c1, c2 = st.columns([1,1])
+    with c1:
+        expand_all = st.button("Expand all")
+    with c2:
+        collapse_all = st.button("Collapse all")
+    default_expanded = True if expand_all else False
+    if collapse_all:
+        default_expanded = False
+
+    for region in regions:
+        g = df[df["region"] == region]
+        total_row = g[g["bucket"] == "Total"][cols_show]
+        # Build a compact summary for the header
+        if not total_row.empty:
+            tr = total_row.iloc[0]
+            def _fmt(x): 
+                try:
+                    return f"{float(x):,.2f}"
+                except Exception:
+                    return "0.00"
+            parts = [f"{region} — Total: {_fmt(tr.get('amount', 0))}"]
+            if "additions_2024" in tr.index:
+                parts.append(f"2024: {_fmt(tr.get('additions_2024', 0))}")
+            if "additions_2025" in tr.index:
+                parts.append(f"2025: {_fmt(tr.get('additions_2025', 0))}")
+            header = " | ".join(parts)
+        else:
+            header = f"{region}"
+
+        with st.expander(header, expanded=default_expanded):
+            detail = g[g["bucket"].isin(["Unrestricted", "Restricted"])]
+            if not detail.empty:
+                st.dataframe(detail[cols_show], use_container_width=True)
+            else:
+                st.caption("No Restricted/Unrestricted detail for this region.")
+
+# ------------------------------------------------------------
+
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
@@ -164,7 +229,10 @@ def main():
                 st.subheader(name)
                 if isinstance(df, pd.DataFrame) and not df.empty:
                     st.caption(f"Rows: {len(df):,} | Columns: {df.shape[1]}")
-                    st.dataframe(df, use_container_width=True)
+                    if name.startswith("A) Region revenue breakdown"):
+                        render_region_breakdown_expanders(df)
+                    else:
+                        st.dataframe(df, use_container_width=True)
                 else:
                     st.info("No data to display.")
 
