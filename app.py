@@ -126,31 +126,39 @@ def diagnostics():
             st.write("Could not list app dir:", e)
         st.write("**Notebook search candidates**:", [str(p) for p in _default_candidates()])
 
-# ---------- NEW: region drill-down using expanders ----------
+# ---------- UPDATED: region drill-down using expanders ----------
 def render_region_breakdown_expanders(df: pd.DataFrame):
     """
-    Expects columns: region, mapped_class, bucket, amount, additions_2024, additions_2025
-    Shows an expander per region. Header = Total row + class subtotals.
+    Expects columns: region, mapped_class, amount, additions_2024, additions_2025
+    Renders an expander per region. Header shows:
+        Region | <class1>: <sum> | <class2>: <sum> | ... | Total: <sum>
+    The body shows the region's rows (one per mapped_class), with "Total" as its own row.
     """
     if df is None or df.empty:
         st.info("No data to display.")
         return
 
-    if "bucket" in df.columns:
-        bucket_order = pd.api.types.CategoricalDtype(["Total", "Unrestricted", "Restricted"], ordered=True)
-        try:
-            df = df.copy()
-            df["bucket"] = df["bucket"].astype(bucket_order)
-        except Exception:
-            pass
-
+    # Keep "Total" region last
     regions = list(df["region"].dropna().unique())
     if "Total" in regions:
         regions = [r for r in regions if r != "Total"] + ["Total"]
 
-    cols_show = [c for c in ["mapped_class","bucket","amount","additions_2024","additions_2025"] if c in df.columns]
+    # Columns to show in the detail table
+    cols_show = [c for c in ["mapped_class", "amount", "additions_2024", "additions_2025"] if c in df.columns]
 
-    c1, c2 = st.columns([1,1])
+    # Class ordering: if categorical, respect it; else alphabetical with "Total" last
+    def _class_sorter(subdf: pd.DataFrame) -> pd.DataFrame:
+        if pd.api.types.is_categorical_dtype(subdf["mapped_class"]):
+            cats = list(subdf["mapped_class"].cat.categories)
+            return subdf.assign(_order=subdf["mapped_class"].apply(lambda x: cats.index(x) if x in cats else len(cats))) \
+                        .sort_values("_order").drop(columns="_order")
+        # fallback: alpha, with "Total" last
+        non_total = subdf[subdf["mapped_class"] != "Total"].sort_values("mapped_class")
+        total = subdf[subdf["mapped_class"] == "Total"]
+        return pd.concat([non_total, total], ignore_index=True)
+
+    # Expand / collapse controls
+    c1, c2 = st.columns([1, 1])
     with c1:
         expand_all = st.button("Expand all")
     with c2:
@@ -160,29 +168,37 @@ def render_region_breakdown_expanders(df: pd.DataFrame):
         default_expanded = False
 
     for region in regions:
-        g = df[df["region"] == region]
+        g = df[df["region"] == region].copy()
+        if g.empty:
+            continue
 
-        # total row (bucket == 'Total', mapped_class == 'Total')
-        total_row = g[(g["bucket"] == "Total") & (g["mapped_class"] == "Total")]
-        header_parts = []
-        if not total_row.empty:
-            amt = float(total_row.iloc[0]["amount"])
-            header_parts.append(f"{region} — Total: {amt:,.2f}")
+        # Build header: per-class (excluding 'Total'), plus the region total
+        class_totals = (
+            g[g["mapped_class"] != "Total"]
+            .groupby("mapped_class", as_index=False)[["amount"]]
+            .sum()
+        )
 
-        # per mapped_class totals (bucket == 'Total' but not mapped_class 'Total')
-        class_totals = g[(g["bucket"] == "Total") & (g["mapped_class"] != "Total")]
+        # Region total: prefer explicit "Total" row if present; else sum of classes
+        explicit_total = g[g["mapped_class"] == "Total"]
+        if not explicit_total.empty:
+            region_total_amt = float(explicit_total.iloc[0]["amount"])
+        else:
+            region_total_amt = float(class_totals["amount"].sum()) if not class_totals.empty else 0.0
+
+        # Sort class totals using same ordering we’ll display in the table
+        class_totals = _class_sorter(class_totals)
+
+        header_parts = [f"{region}"]
         for _, row in class_totals.iterrows():
             header_parts.append(f"{row['mapped_class']}: {row['amount']:,.2f}")
-
-        header = " | ".join(header_parts) if header_parts else f"{region}"
+        header_parts.append(f"Total: {region_total_amt:,.2f}")
+        header = " | ".join(header_parts)
 
         with st.expander(header, expanded=default_expanded):
-            detail = g[g["bucket"].isin(["Unrestricted", "Restricted"])]
-            if not detail.empty:
-                st.dataframe(detail[cols_show], use_container_width=True)
-            else:
-                st.caption("No Restricted/Unrestricted detail for this region.")
-
+            # Show region rows (each mapped_class once, including 'Total')
+            g = _class_sorter(g)
+            st.dataframe(g[cols_show], use_container_width=True)
 # ------------------------------------------------------------
 
 def main():
