@@ -127,12 +127,12 @@ def diagnostics():
         st.write("**Notebook search candidates**:", [str(p) for p in _default_candidates()])
 
 
-# ---------- UPDATED: tab A renders a simple table populated from df ----------
+# ---------- UPDATED: tab A renders a 2025-only table ----------
 def render_region_breakdown_expanders(df: pd.DataFrame):
     """
     Expects columns: region, mapped_class, amount, additions_2024, additions_2025
 
-    Renders a simple table with fixed rows/columns populated from df['amount']:
+    Renders a simple table showing only 2025 additions (from df['additions_2025']).
 
     Columns (display order): Total, Africa, Brazil/LATAM, Central Asia, India, Middle East, Greatest Need, New Regions
     Rows (display order):    Addition Scholars, Addition Global, Pledged but not received, Addition Unrestricted
@@ -191,20 +191,20 @@ def render_region_breakdown_expanders(df: pd.DataFrame):
         "New Regions": "New Regions",   # may not exist
     }
 
-    # Work only with granular rows (exclude any pre-computed 'Total' rows in df)
-    granular = df[df["mapped_class"] != "Total"].copy()
+    # Use only rows with nonzero additions_2025 and exclude precomputed totals
+    granular = df[(df["mapped_class"] != "Total") & (df["additions_2025"] != 0)].copy()
 
-    # Pivot: rows=source mapped_class, cols=region, values=amount
+    # Pivot: rows=source mapped_class, cols=region, values=additions_2025
     pivot = granular.pivot_table(
         index="mapped_class",
         columns="region",
-        values="amount",
+        values="additions_2025",
         aggfunc="sum",
         fill_value=0.0,
         observed=False,
     )
 
-    # Build the display matrix by mapping each display row/col to the source
+    # Build display matrix
     out = pd.DataFrame(
         0.0, index=pd.Index(display_rows, name=""), columns=[c for c in display_cols if c != "Total"]
     )
@@ -212,30 +212,25 @@ def render_region_breakdown_expanders(df: pd.DataFrame):
     for disp_col, src_region in col_to_source_region.items():
         if disp_col == "Total":
             continue
-        # Pull the column from the pivot if present
         col_series = pivot.get(src_region)
         for disp_row, src_class in row_to_source_class.items():
             value = 0.0
             if col_series is not None and src_class in pivot.index:
-                # Normal case: class and region both exist
                 value = float(col_series.get(src_class, 0.0))
-            # else: leave as 0.0 (missing in df)
             out.loc[disp_row, disp_col] = value
 
     # Compute the first "Total" column as row sums across the selected regions
     total_col = out.sum(axis=1).rename("Total")
 
-    # Final table: Total first, then the mapped region columns in the requested order
+    # Final table
     ordered_region_cols = [c for c in display_cols if c != "Total"]
     final_table = pd.concat([total_col, out[ordered_region_cols]], axis=1)
 
-    # Optional: currency formatting
+    # Currency formatting
     final_display = final_table.applymap(lambda x: f"${x:,.0f}")
 
     st.dataframe(final_display, use_container_width=True)
 # ------------------------------------------------------------
-
-
 
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
