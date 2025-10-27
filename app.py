@@ -127,50 +127,24 @@ def diagnostics():
         st.write("**Notebook search candidates**:", [str(p) for p in _default_candidates()])
 
 
-# ---------- Tab A: render fixed table using ONLY additions_2025 ----------
 def render_region_breakdown_expanders(df: pd.DataFrame, value_col: str = "additions_2025"):
-    """
-    Expects columns: region, mapped_class, amount, additions_2024, additions_2025
-    Renders a simple table using ONLY `value_col` (default: additions_2025).
-
-    Columns: Total, Africa, Brazil/LATAM, Central Asia, India, Middle East, Greatest Need, New Regions
-    Rows:    Addition Scholars, Addition Global, Pledged but not received, Addition Unrestricted
-    """
     import pandas as pd
     import streamlit as st
 
     if df is None or df.empty:
         st.info("No data to display.")
         return
-
-    # Hard guard: fail fast if the chosen value_col is missing
     if value_col not in df.columns:
         st.error(f"Column '{value_col}' not found in data.")
         return
 
-    # Display structure
-    display_rows = [
-        "Addition Scholars",
-        "Addition Global",
-        "Pledged but not received",
-        "Addition Unrestricted",
-    ]
-    display_cols = [
-        "Total",
-        "Africa",
-        "Brazil/LATAM",
-        "Central Asia",
-        "India",
-        "Middle East",
-        "Greatest Need",
-        "New Regions",
-    ]
+    display_rows = ["Addition Scholars","Addition Global","Pledged but not received","Addition Unrestricted"]
+    display_cols = ["Total","Africa","Brazil/LATAM","Central Asia","India","Middle East","Greatest Need","New Regions"]
 
-    # Mappings
     row_to_source_class = {
         "Addition Scholars": "Restricted - MD Scholars",
         "Addition Global": "Restricted - Global Work",
-        "Pledged but not received": "Pledged but not received",  # may not exist
+        "Pledged but not received": "Pledged but not received",
         "Addition Unrestricted": "Unrestricted",
     }
     col_to_source_region = {
@@ -180,49 +154,42 @@ def render_region_breakdown_expanders(df: pd.DataFrame, value_col: str = "additi
         "India": "South Asia",
         "Middle East": "Middle East",
         "Greatest Need": "Greatest Need",
-        "New Regions": "New Regions",  # may not exist
+        "New Regions": "New Regions",
     }
 
-    # Use ONLY granular rows; ignore any precomputed Total rows in the source
-    granular = df[df["mapped_class"] != "Total"].copy()
+    # ❗ Drop BOTH kinds of precomputed totals
+    granular = df[(df["mapped_class"] != "Total") & (df["region"] != "Total")].copy()
 
-    # Strictly operate on value_col; coerce to numeric to avoid dtype issues
+    # Ensure we're only ever using value_col
     granular[value_col] = pd.to_numeric(granular[value_col], errors="coerce").fillna(0.0)
 
-    # Pivot on value_col (NOT 'amount')
     pivot = granular.pivot_table(
         index="mapped_class",
         columns="region",
-        values=value_col,
+        values=value_col,          # ✅ uses additions_2025 (or whatever you pass)
         aggfunc="sum",
         fill_value=0.0,
         observed=False,
     )
 
-    # Build output matrix
-    out = pd.DataFrame(
-        0.0, index=pd.Index(display_rows, name=""), columns=[c for c in display_cols if c != "Total"]
-    )
+    # Restrict to just the regions we map/display (avoids stray cols)
+    allowed_regions = set(col_to_source_region.values())
+    pivot = pivot[[c for c in pivot.columns if c in allowed_regions]]
+
+    out = pd.DataFrame(0.0, index=pd.Index(display_rows, name=""),
+                       columns=[c for c in display_cols if c != "Total"])
+
     for disp_col, src_region in col_to_source_region.items():
-        if disp_col == "Total":
+        if src_region not in pivot.columns:
             continue
-        col_series = pivot.get(src_region)  # None if region missing
+        col_series = pivot[src_region]
         for disp_row, src_class in row_to_source_class.items():
-            val = 0.0
-            if (col_series is not None) and (src_class in pivot.index):
-                val = float(col_series.get(src_class, 0.0))
-            out.loc[disp_row, disp_col] = val
+            out.loc[disp_row, disp_col] = float(col_series.get(src_class, 0.0))
 
-    # First column = row sum across the selected regions
     total_col = out.sum(axis=1).rename("Total")
-
-    final_table = pd.concat([total_col, out[[c for c in display_cols if c != "Total"]]], axis=1)
-
-    # Format as currency
+    final_table = pd.concat([total_col, out[out.columns]], axis=1)
     final_display = final_table.applymap(lambda x: f"${x:,.0f}")
-
     st.dataframe(final_display, use_container_width=True)
-# ------------------------------------------------------------
 
 
 def main():
