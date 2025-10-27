@@ -126,80 +126,77 @@ def diagnostics():
             st.write("Could not list app dir:", e)
         st.write("**Notebook search candidates**:", [str(p) for p in _default_candidates()])
 
-# ---------- UPDATED: region drill-down using expanders ----------
+
+# ---------- UPDATED: tab A renders a simple pivoted table from df ----------
 def render_region_breakdown_expanders(df: pd.DataFrame):
     """
     Expects columns: region, mapped_class, amount, additions_2024, additions_2025
-    Renders an expander per region. Header shows:
-        Region | <class1>: <sum> | <class2>: <sum> | ... | Total: <sum>
-    The body shows the region's rows (one per mapped_class), with "Total" as its own row.
+    Renders a simple table with fixed rows/columns populated from df['amount'].
+
+    Columns (in order): Total, Africa, Brazil/LATAM, Central Asia, India, Middle East, Greatest Need, New Regions
+    Rows (in order):    Addition Scholars, Addition Global, Pledged but not received, Addition Unrestricted
     """
+    import pandas as pd
+    import streamlit as st
+
     if df is None or df.empty:
         st.info("No data to display.")
         return
 
-    # Keep "Total" region last
-    regions = list(df["region"].dropna().unique())
-    if "Total" in regions:
-        regions = [r for r in regions if r != "Total"] + ["Total"]
+    # Desired output structure
+    desired_rows = [
+        "Addition Scholars",
+        "Addition Global",
+        "Pledged but not received",
+        "Addition Unrestricted",
+    ]
+    desired_regions = [
+        "Africa",
+        "Brazil/LATAM",
+        "Central Asia",
+        "India",
+        "Middle East",
+        "Greatest Need",
+        "New Regions",
+    ]
 
-    # Columns to show in the detail table
-    cols_show = [c for c in ["mapped_class", "amount", "additions_2024", "additions_2025"] if c in df.columns]
-
-    # Class ordering: if categorical, respect it; else alphabetical with "Total" last
-    def _class_sorter(subdf: pd.DataFrame) -> pd.DataFrame:
-        if pd.api.types.is_categorical_dtype(subdf["mapped_class"]):
-            cats = list(subdf["mapped_class"].cat.categories)
-            return subdf.assign(_order=subdf["mapped_class"].apply(lambda x: cats.index(x) if x in cats else len(cats))) \
-                        .sort_values("_order").drop(columns="_order")
-        # fallback: alpha, with "Total" last
-        non_total = subdf[subdf["mapped_class"] != "Total"].sort_values("mapped_class")
-        total = subdf[subdf["mapped_class"] == "Total"]
-        return pd.concat([non_total, total], ignore_index=True)
-
-    # Expand / collapse controls
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        expand_all = st.button("Expand all")
-    with c2:
-        collapse_all = st.button("Collapse all")
-    default_expanded = True if expand_all else False
-    if collapse_all:
-        default_expanded = False
-
-    for region in regions:
-        g = df[df["region"] == region].copy()
-        if g.empty:
-            continue
-
-        # Build header: per-class (excluding 'Total'), plus the region total
-        class_totals = (
-            g[g["mapped_class"] != "Total"]
-            .groupby("mapped_class", as_index=False)[["amount"]]
-            .sum()
+    # Build pivot of amounts by mapped_class (rows) x region (columns)
+    pivot = (
+        df.pivot_table(
+            index="mapped_class",
+            columns="region",
+            values="amount",
+            aggfunc="sum",
+            fill_value=0.0,
+            observed=False,
         )
+        .reindex(index=desired_rows)  # enforce row order (keeps any missing as NaN -> fill later)
+    )
 
-        # Region total: prefer explicit "Total" row if present; else sum of classes
-        explicit_total = g[g["mapped_class"] == "Total"]
-        if not explicit_total.empty:
-            region_total_amt = float(explicit_total.iloc[0]["amount"])
-        else:
-            region_total_amt = float(class_totals["amount"].sum()) if not class_totals.empty else 0.0
+    # Keep only the regions we care about, in order; fill missing with 0
+    pivot_desired = (
+        pivot.reindex(columns=desired_regions)
+        .fillna(0.0)
+    )
 
-        # Sort class totals using same ordering we’ll display in the table
-        class_totals = _class_sorter(class_totals)
+    # Compute the Total column as the sum across the desired regions
+    total_col = pivot_desired.sum(axis=1).rename("Total")
 
-        header_parts = [f"{region}"]
-        for _, row in class_totals.iterrows():
-            header_parts.append(f"{row['mapped_class']}: {row['amount']:,.2f}")
-        header_parts.append(f"Total: {region_total_amt:,.2f}")
-        header = " | ".join(header_parts)
+    # If there's a 'Total' region in the data and you'd prefer to coalesce it, uncomment below:
+    # if "Total" in pivot.columns:
+    #     from numpy import where
+    #     total_from_df = pivot["Total"].reindex(desired_rows).fillna(0.0)
+    #     total_col = pd.Series(where(total_from_df.notna(), total_from_df, total_col), index=desired_rows, name="Total")
 
-        with st.expander(header, expanded=default_expanded):
-            # Show region rows (each mapped_class once, including 'Total')
-            g = _class_sorter(g)
-            st.dataframe(g[cols_show], use_container_width=True)
+    # Final table: Total first, then the regions
+    final_table = pd.concat([total_col, pivot_desired], axis=1)
+
+    # Optional: currency formatting (comment out if you want raw numbers)
+    final_display = final_table.applymap(lambda x: f"${x:,.0f}")
+
+    st.dataframe(final_display, use_container_width=True)
 # ------------------------------------------------------------
+
 
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
